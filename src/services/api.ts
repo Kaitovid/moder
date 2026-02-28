@@ -2,6 +2,24 @@ import axios from 'axios';
 
 const BASE = import.meta.env.VITE_API_BASE_URL;
 
+// Token de moderador definido en el servidor
+const ADMIN_TOKEN = 'uts_admin_2026';
+
+// ============================================================
+// AXIOS INTERCEPTOR — inyecta el token en cada request
+// ============================================================
+
+// Instancia con token para rutas protegidas
+export const apiAdmin = axios.create({ baseURL: BASE });
+apiAdmin.interceptors.request.use((config) => {
+    config.headers = config.headers ?? {};
+    config.headers['Authorization'] = `Bearer ${ADMIN_TOKEN}`;
+    return config;
+});
+
+// Instancia pública (sin token)
+export const apiPublic = axios.create({ baseURL: BASE });
+
 // ============================================================
 // TIPOS
 // ============================================================
@@ -71,18 +89,33 @@ function normalizarRazon(raw: any): ModerationRequest {
 }
 
 // ============================================================
+// AUTH — login moderador
+// ============================================================
+
+export const AuthAPI = {
+    /**
+     * Autentica al moderador con el token.
+     * POST /api/parches/auth/login { token }
+     */
+    login: async (token: string): Promise<{ ok: boolean; message?: string }> => {
+        const res = await apiPublic.post('/api/parches/auth/login', { token });
+        return res.data;
+    },
+};
+
+// ============================================================
 // RAZONES — ranking_infieles
 // ============================================================
 
 export const ModeracionAPI = {
     getPendientes: async (): Promise<ModerationRequest[]> => {
-        const res = await axios.get(`${BASE}/api/personas/moderacion/pendientes`);
+        const res = await apiAdmin.get('/api/personas/moderacion/pendientes');
         const raw: any[] = res.data?.data ?? res.data ?? [];
         return raw.map(normalizarRazon);
     },
 
     updateStatus: async (razonId: number, status: 'aprobado' | 'rechazado' | 'pendiente'): Promise<void> => {
-        await axios.put(`${BASE}/api/personas/moderacion/${razonId}`, { status });
+        await apiAdmin.put(`/api/personas/moderacion/${razonId}`, { status });
     },
 };
 
@@ -93,7 +126,7 @@ export const ModeracionAPI = {
 export const PersonasAPI = {
     /** Lista todas las personas con sus votos */
     getAll: async (): Promise<Persona[]> => {
-        const res = await axios.get(`${BASE}/api/personas`);
+        const res = await apiAdmin.get('/api/personas');
         const raw: any[] = res.data?.data ?? res.data ?? [];
         return raw.map((p: any) => ({
             id:           p.id,
@@ -108,15 +141,12 @@ export const PersonasAPI = {
 
     /** Actualiza nombre (y/o carrera) de una persona */
     update: async (id: number, data: { nombre?: string; carrera?: string }): Promise<void> => {
-        await axios.put(`${BASE}/api/personas/${id}`, data);
+        await apiAdmin.put(`/api/personas/${id}`, data);
     },
 
-    /** Elimina una persona — contraseña admin enviada automáticamente */
-    delete: async (id: number, password = 'admin123'): Promise<void> => {
-        await axios.delete(`${BASE}/api/personas/${id}`, {
-            headers: { 'Content-Type': 'application/json' },
-            data: { password },
-        });
+    /** Elimina una persona — usa token admin en header */
+    delete: async (id: number): Promise<void> => {
+        await apiAdmin.delete(`/api/personas/${id}`);
     },
 };
 
@@ -125,12 +155,93 @@ export const PersonasAPI = {
 // ============================================================
 
 export const ParchesAPI = {
+    /**
+     * Panel de moderación: todos los parches (pendientes, aprobados, rechazados).
+     * GET /api/parches/moderacion/todos  — requiere token admin
+     */
     getPanel: async (): Promise<Parche[]> => {
-        const res = await axios.get(`${BASE}/api/parches/moderacion`);
+        const res = await apiAdmin.get('/api/parches/moderacion/todos');
+        const raw: any[] = res.data?.data ?? res.data ?? [];
+        return raw.map((p: any): Parche => ({
+            id:               p.id,
+            titulo:           p.titulo,
+            descripcion:      p.descripcion,
+            categoria:        p.categoria,
+            emoji:            p.emoji,
+            autor:            p.autor,
+            carrera:          p.carrera,
+            lugar:            p.lugar,
+            fecha:            p.fecha,
+            hora:             p.hora,
+            cupo:             p.cupo,
+            requisitos:       p.requisitos,
+            contacto:         p.contacto,
+            status:           p.status,
+            mod_nota:         p.mod_nota,
+            mod_at:           p.mod_at,
+            mod_alias:        p.mod_alias,
+            created_at:       p.created_at,
+            total_interesados: p.total_interesados,
+        }));
+    },
+
+    /**
+     * Aprobar o rechazar un parche.
+     * PUT /api/parches/moderacion/:id  { status, mod_id }
+     * mod_id = 1 es el moderador admin principal
+     */
+    updateStatus: async (
+        parcheId: number,
+        status: 'aprobado' | 'rechazado' | 'pendiente',
+        mod_id = 1,
+        nota?: string,
+    ): Promise<void> => {
+        await apiAdmin.put(`/api/parches/moderacion/${parcheId}`, { status, mod_id, nota });
+    },
+
+    /**
+     * Elimina un parche permanentemente.
+     * DELETE /api/parches/:id  — requiere token admin en header
+     */
+    delete: async (parcheId: number): Promise<void> => {
+        await apiAdmin.delete(`/api/parches/${parcheId}`);
+    },
+
+    // ── Endpoints públicos (uso opcional desde el panel) ────────
+
+    /**
+     * Tablón público: solo parches aprobados.
+     * GET /api/parches
+     */
+    getPublicos: async (): Promise<Parche[]> => {
+        const res = await apiPublic.get('/api/parches');
         return res.data?.data ?? res.data ?? [];
     },
 
-    updateStatus: async (parcheId: number, status: 'aprobado' | 'rechazado' | 'pendiente', nota?: string): Promise<void> => {
-        await axios.put(`${BASE}/api/parches/moderacion/${parcheId}`, { status, nota });
+    /**
+     * Detalle de un parche aprobado.
+     * GET /api/parches/:id
+     */
+    getById: async (id: number): Promise<Parche> => {
+        const res = await apiPublic.get(`/api/parches/${id}`);
+        return res.data?.data ?? res.data;
+    },
+
+    /**
+     * Toggle "Me interesa" (fingerprint automático del servidor).
+     * POST /api/parches/:id/interesado
+     */
+    toggleInteresado: async (id: number): Promise<{ interesado: boolean; total: number }> => {
+        const res = await apiPublic.post(`/api/parches/${id}/interesado`);
+        return res.data?.data ?? res.data;
+    },
+
+    /**
+     * Publicar un nuevo parche (queda pendiente de aprobación).
+     * POST /api/parches
+     */
+    publicar: async (data: Omit<Parche, 'id' | 'status' | 'created_at' | 'mod_nota' | 'mod_at' | 'mod_alias' | 'total_interesados'>): Promise<Parche> => {
+        const res = await apiPublic.post('/api/parches', data);
+        return res.data?.data ?? res.data;
     },
 };

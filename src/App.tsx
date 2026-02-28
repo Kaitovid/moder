@@ -329,6 +329,7 @@ function VistaParches() {
   const [search,        setSearch]        = useState("");
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [expanded,      setExpanded]      = useState<number | null>(null);
+  const [confirmDel,    setConfirmDel]    = useState<Parche | null>(null);
 
   const fetchData = useCallback(async () => {
     try { setLoading(true); setError(null); setItems(await ParchesAPI.getPanel()); }
@@ -341,9 +342,22 @@ function VistaParches() {
   const handleStatus = async (id: number, status: "aprobado" | "rechazado" | "pendiente") => {
     setActionLoading(id);
     try {
-      await ParchesAPI.updateStatus(id, status);
+      // mod_id = 1 es el moderador admin principal (requerido por la API)
+      await ParchesAPI.updateStatus(id, status, 1);
       setItems(prev => prev.map(r => r.id === id ? { ...r, status } : r));
     } catch (e: any) { alert("Error: " + (e.response?.data?.error || e.message)); }
+    finally { setActionLoading(null); }
+  };
+
+  const handleDelete = async () => {
+    if (!confirmDel) return;
+    const id = confirmDel.id;
+    setConfirmDel(null);
+    setActionLoading(id);
+    try {
+      await ParchesAPI.delete(id);
+      setItems(prev => prev.filter(p => p.id !== id));
+    } catch (e: any) { alert("Error al eliminar: " + (e.response?.data?.error || e.message)); }
     finally { setActionLoading(null); }
   };
 
@@ -388,6 +402,17 @@ function VistaParches() {
         </div>
       )}
 
+      {/* Modal confirmación borrar parche */}
+      {confirmDel && (
+        <ConfirmModal
+          title="¿Eliminar parche?"
+          message={`Esto borrará permanentemente el parche "${confirmDel.titulo}". Esta acción no se puede deshacer.`}
+          confirmLabel="Eliminar parche"
+          onConfirm={() => handleDelete()}
+          onCancel={() => setConfirmDel(null)}
+        />
+      )}
+
       {loading ? (
         <div className="flex flex-col items-center py-24 gap-3">
           <span className="material-symbols-outlined animate-spin text-4xl text-orange-500">progress_activity</span>
@@ -422,10 +447,20 @@ function VistaParches() {
                 <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[14px]">person</span><span className="font-semibold">{parche.autor}</span>{parche.carrera && <span className="opacity-60">· {parche.carrera}</span>}</div>
                 <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[14px]">location_on</span><span>{parche.lugar}</span></div>
                 <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[14px]">calendar_month</span><span>{formatDate(parche.fecha)} · {parche.hora?.substring(0, 5)}</span></div>
-                {parche.cupo && <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[14px]">group</span><span>Cupo: {parche.cupo}</span>{parche.total_interesados !== undefined && <span className="text-orange-400 font-bold">· {parche.total_interesados}</span>}</div>}
+                {parche.cupo && <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-[14px]">group</span><span>Cupo: {parche.cupo}</span>{parche.total_interesados !== undefined && <span className="text-orange-400 font-bold">· {parche.total_interesados} interesados</span>}</div>}
               </div>
               <div className="flex items-center justify-between pt-3 border-t border-white/5">
-                <span className="text-[10px] text-zinc-600">#{parche.id} · {formatDate(parche.created_at)}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-zinc-600">#{parche.id} · {formatDate(parche.created_at)}</span>
+                  <button
+                    onClick={() => setConfirmDel(parche)}
+                    disabled={actionLoading === parche.id}
+                    title="Eliminar parche"
+                    className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500 hover:text-white flex items-center justify-center transition disabled:opacity-40"
+                  >
+                    <span className="material-symbols-outlined text-[13px]">delete</span>
+                  </button>
+                </div>
                 <ActionButtons status={parche.status} loading={actionLoading === parche.id}
                   onAprobar={()  => handleStatus(parche.id, "aprobado")}
                   onRechazar={()  => handleStatus(parche.id, "rechazado")}
